@@ -398,7 +398,7 @@ async function waitForVideoAndGetUrl(
 async function handleGenerate(event) {
   event.preventDefault();
 
-  const elevenKey = 'sk_0482e1026385e70467552530c58bf253d80dcf4e4b3c61e4';//document.getElementById('elevenKey').value.trim();
+  const elevenKey = document.getElementById('elevenKey').value.trim();
   const elevenVoiceId = 'cgSgspJ2msm6clMCkdW9';
   const elevenModelId = 'eleven_multilingual_v2';
   const heygenKey = document.getElementById('heygenKey').value.trim();
