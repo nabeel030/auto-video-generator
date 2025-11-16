@@ -1,50 +1,44 @@
-const fs = require('fs');
-const path = require('path');
-const process = require('process');
+// index.js (browser-side, no Node APIs)
 
-// ---------- Config ----------
+// -------------- Small helpers --------------
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || 'sk_0482e1026385e70467552530c58bf253d80dcf4e4b3c61e4';
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-if (!ELEVENLABS_API_KEY) {
-  console.error('Error: Please set ELEVENLABS_API_KEY in your environment.');
-  process.exit(1);
+function guessContentType(fileName, fallback) {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'mp3') return 'audio/mpeg';
+  if (ext === 'wav') return 'audio/wav';
+  if (ext === 'm4a') return 'audio/mp4';
+  return fallback || 'application/octet-stream';
 }
 
-// Jessica + multilingual v2 (these match your “perfect” settings from history)
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'cgSgspJ2msm6clMCkdW9';
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
-
-// Prefer env var for security
-const HEYGEN_API_KEY = process.env.HEYGEN_API_KEY || "sk_V2_hgu_k4jCl9wPlH2_CorF4sCreUxPbxZsN8xPSIxz7WKCfHjD";
-
-if (!HEYGEN_API_KEY) {
-  console.error('Error: Please set HEYGEN_API_KEY in your environment.');
-  process.exit(1);
+function setStatus(msg, type = '') {
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = msg;
+  statusEl.className = 'status';
+  if (type === 'error') statusEl.classList.add('status--error');
+  if (type === 'success') statusEl.classList.add('status--success');
 }
 
-const UPLOAD_ASSET_URL = 'https://upload.heygen.com/v1/asset';
-const PHOTO_AVATAR_GROUP_CREATE_URL = 'https://api.heygen.com/v2/photo_avatar/avatar_group/create';
-const AVATAR_GROUP_AVATARS_URL = (groupId) =>
-  `https://api.heygen.com/v2/avatar_group/${encodeURIComponent(groupId)}/avatars`;
-const ADD_MOTION_URL = 'https://api.heygen.com/v2/photo_avatar/add_motion';
-const VIDEO_GENERATE_URL = 'https://api.heygen.com/v2/video/generate';
-const VIDEO_STATUS_URL = 'https://api.heygen.com/v1/video_status.get';
+// -------------- ElevenLabs: TTS -> Blob --------------
 
-// ---------- Helpers ----------
-
-// ---------- ElevenLabs TTS: generate audio file from text ----------
-
-async function generateElevenLabsAudioToFile(text, outPath) {
-  console.log('▶ Generating audio via ElevenLabs...');
+async function generateElevenLabsAudioBlob({
+  elevenKey,
+  voiceId,
+  modelId,
+  text,
+}) {
+  console.log('▶ Calling ElevenLabs TTS…');
 
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
-    ELEVENLABS_VOICE_ID
+    voiceId
   )}`;
 
   const body = {
     text,
-    model_id: ELEVENLABS_MODEL_ID,
+    model_id: modelId,
     voice_settings: {
       similarity_boost: 0.75,
       stability: 0.5,
@@ -56,7 +50,7 @@ async function generateElevenLabsAudioToFile(text, outPath) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      'xi-api-key': ELEVENLABS_API_KEY,
+      'xi-api-key': elevenKey,
       'Content-Type': 'application/json',
       Accept: 'audio/mpeg',
     },
@@ -70,27 +64,58 @@ async function generateElevenLabsAudioToFile(text, outPath) {
     );
   }
 
-  const arrayBuffer = await res.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  await fs.promises.writeFile(outPath, buffer);
-
-  console.log('✔ ElevenLabs audio generated at:', outPath);
-  return outPath;
+  const blob = await res.blob();
+  console.log('✔ ElevenLabs audio generated (blob size:', blob.size, ')');
+  return blob;
 }
 
+// -------------- HeyGen: Upload asset (image/audio) --------------
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function uploadHeygenAsset({ heygenKey, file, fallbackType }) {
+  const url = 'https://upload.heygen.com/v1/asset';
+
+  const contentType =
+    file.type || guessContentType(file.name || 'file', fallbackType);
+
+  console.log('▶ Uploading HeyGen asset:', file.name || '(blob)', contentType);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': contentType,
+      'X-Api-Key': heygenKey,
+    },
+    body: file,
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `HeyGen upload failed. HTTP ${res.status}: ${JSON.stringify(json)}`
+    );
+  }
+
+  const data = json.data || {};
+  const id =
+    data.image_key || data.id || data.asset_id || data.audio_asset_id || null;
+
+  if (!id) {
+    throw new Error('HeyGen upload did not return an asset id: ' + JSON.stringify(json));
+  }
+
+  console.log('✔ HeyGen asset uploaded. id:', id);
+  return id;
 }
 
-async function jsonFetch(url, options = {}) {
+// -------------- HeyGen: JSON helper --------------
+
+async function heygenJsonFetch(url, options = {}, heygenKey) {
   const res = await fetch(url, {
     ...options,
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      'X-Api-Key': HEYGEN_API_KEY,
+      'X-Api-Key': heygenKey,
       ...(options.headers || {}),
     },
   });
@@ -112,118 +137,24 @@ async function jsonFetch(url, options = {}) {
   return data;
 }
 
-async function downloadFile(url, outPath) {
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to download video: HTTP ${res.status}`);
-    }
-  
-    // In Node fetch, body is a Web ReadableStream, so use arrayBuffer()
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-  
-    await fs.promises.writeFile(outPath, buffer);
-  }
+// -------------- HeyGen: Create avatar group --------------
 
-// Very small helper to infer content type from extension
-function guessContentType(filePath, fallback) {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.png') return 'image/png';
-  if (ext === '.mp3') return 'audio/mpeg';
-  if (ext === '.wav') return 'audio/wav';
-  if (ext === '.m4a') return 'audio/mp4';
-  return fallback || 'application/octet-stream';
-}
-
-// ---------- Step 1: Upload avatar image (local file) ----------
-
-async function uploadImageAsset(imagePath) {
-  console.log('▶ Uploading image asset:', imagePath);
-
-  const contentType = guessContentType(imagePath, 'image/jpeg');
-  const fileBuffer = fs.readFileSync(imagePath);
-
-  const res = await fetch(UPLOAD_ASSET_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': contentType,
-      'X-Api-Key': HEYGEN_API_KEY,
-      'Content-Length': fileBuffer.length,
-    },
-    body: fileBuffer,
-  });
-
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(
-      `Upload image failed. HTTP ${res.status}: ${JSON.stringify(json)}`
-    );
-  }
-
-  const imageKey =
-    json.data?.image_key || json.data?.id || json.data?.asset_id;
-
-  if (!imageKey) {
-    throw new Error(
-      'No image_key in upload response: ' + JSON.stringify(json)
-    );
-  }
-
-  console.log('✔ Image uploaded. image_key:', imageKey);
-  return imageKey;
-}
-
-// ---------- Step 6: Upload audio (local file) ----------
-
-async function uploadAudioAsset(audioPath) {
-  console.log('▶ Uploading audio asset:', audioPath);
-
-  const contentType = guessContentType(audioPath, 'audio/mpeg');
-  const fileBuffer = fs.readFileSync(audioPath);
-
-  const res = await fetch(UPLOAD_ASSET_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': contentType,
-      'X-Api-Key': HEYGEN_API_KEY,
-      'Content-Length': fileBuffer.length,
-    },
-    body: fileBuffer,
-  });
-
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(
-      `Upload audio failed. HTTP ${res.status}: ${JSON.stringify(json)}`
-    );
-  }
-
-  const audioAssetId = json.data?.id || json.data?.asset_id;
-  if (!audioAssetId) {
-    throw new Error(
-      'No audio asset id in upload response: ' + JSON.stringify(json)
-    );
-  }
-
-  console.log('✔ Audio uploaded. audio_asset_id:', audioAssetId);
-  return audioAssetId;
-}
-
-// ---------- Step 2: Create Photo Avatar Group from image_key ----------
-
-async function createAvatarGroup(imageKey) {
-  console.log('▶ Creating photo avatar group...');
+async function createAvatarGroup(heygenKey, imageKey) {
+  console.log('▶ Creating HeyGen photo avatar group…');
 
   const payload = {
-    name: 'Generated Talking Photo',
+    name: 'Generated Talking Photo (Browser)',
     image_key: imageKey,
   };
 
-  const res = await jsonFetch(PHOTO_AVATAR_GROUP_CREATE_URL, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  const res = await heygenJsonFetch(
+    'https://api.heygen.com/v2/photo_avatar/avatar_group/create',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    heygenKey
+  );
 
   const groupId = res.data?.group_id;
   if (!groupId) {
@@ -236,50 +167,54 @@ async function createAvatarGroup(imageKey) {
   return groupId;
 }
 
-// ---------- Step 3: Get base talking photo id from avatar group ----------
+async function getAvatarList(heygenKey, groupId) {
+  const url = `https://api.heygen.com/v2/avatar_group/${encodeURIComponent(
+    groupId
+  )}/avatars`;
 
-async function getBaseTalkingPhotoId(groupId) {
+  const res = await heygenJsonFetch(
+    url,
+    { method: 'GET' },
+    heygenKey
+  );
+
+  return res.data?.avatar_list || [];
+}
+
+async function getBaseTalkingPhotoId(heygenKey, groupId) {
   console.log('▶ Fetching avatar list for group:', groupId);
 
-  const res = await jsonFetch(AVATAR_GROUP_AVATARS_URL(groupId), {
-    method: 'GET',
-  });
+  const list = await getAvatarList(heygenKey, groupId);
 
-  const list = res.data?.avatar_list || [];
   if (!list.length) {
     throw new Error('Avatar list empty for group: ' + groupId);
   }
 
   const id = list[0].id;
   if (!id) {
-    throw new Error(
-      'Avatar has no id: ' + JSON.stringify(list[0])
-    );
+    throw new Error('Avatar has no id: ' + JSON.stringify(list[0]));
   }
 
   console.log('✔ Base talking photo id:', id);
   return id;
 }
 
-// ---------- NEW: Step 3.5 – Wait for base photo avatar to complete ----------
-
 async function waitForBasePhotoAvatarCompleted(
+  heygenKey,
   groupId,
   avatarId,
   { intervalMs = 5000, maxAttempts = 60 } = {}
 ) {
-  console.log('▶ Waiting for base photo avatar to complete...');
+  console.log('▶ Waiting for base photo avatar to complete…');
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await jsonFetch(AVATAR_GROUP_AVATARS_URL(groupId), {
-      method: 'GET',
-    });
-
-    const list = res.data?.avatar_list || [];
+    const list = await getAvatarList(heygenKey, groupId);
     const found = list.find((av) => av.id === avatarId);
-
     const status = found?.status;
-    console.log(`  Attempt ${attempt}: base avatar status = ${status || 'unknown'}`);
+
+    console.log(
+      `  Attempt ${attempt}: base avatar status = ${status || 'unknown'}`
+    );
 
     if (status === 'completed') {
       console.log('✔ Base photo avatar completed.');
@@ -298,53 +233,51 @@ async function waitForBasePhotoAvatarCompleted(
   throw new Error('Timed out waiting for base photo avatar to complete.');
 }
 
-async function addMotionToTalkingPhoto(talkingPhotoId) {
-    console.log('▶ Adding motion to talking photo:', talkingPhotoId);
-  
-    const payload = {
-      id: talkingPhotoId,
-      // Calm, not over-animated
-      prompt:
-        'Speak in a calm, friendly manner with subtle eye movement and small, natural head motions. Avoid exaggerated blinking or fast head movements.',
-      // MUST be one of: 'consistent', 'consistent_gen_3', 'expressive', 'veo2', 'veo3.1', 'hailuo_2', 'seedance_lite', 'kling', 'runway_gen4', 'runway_gen3', 'avatar_iv'
-      motion_type: 'consistent',
-    };
-  
-    const res = await jsonFetch(ADD_MOTION_URL, {
+// -------------- HeyGen: Add motion & wait --------------
+
+async function addMotionToTalkingPhoto(heygenKey, talkingPhotoId) {
+  console.log('▶ Adding motion to talking photo:', talkingPhotoId);
+
+  const payload = {
+    id: talkingPhotoId,
+    prompt:
+      'Speak in a calm, friendly manner with subtle eye movement and small, natural head motions. Avoid exaggerated blinking or fast head movements.',
+    motion_type: 'consistent',
+  };
+
+  const res = await heygenJsonFetch(
+    'https://api.heygen.com/v2/photo_avatar/add_motion',
+    {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
-  
-    const motionId = res.data?.id;
-    if (!motionId) {
-      throw new Error(
-        'No motion id returned from add_motion: ' + JSON.stringify(res)
-      );
-    }
-  
-    console.log('✔ Motion added. talking_photo_with_motion_id:', motionId);
-    return motionId;
-  }
-  
+    },
+    heygenKey
+  );
 
-// ---------- Step 5: Wait until motion avatar is ready ----------
+  const motionId = res.data?.id;
+  if (!motionId) {
+    throw new Error(
+      'No motion id returned from add_motion: ' + JSON.stringify(res)
+    );
+  }
+
+  console.log('✔ Motion added. talking_photo_with_motion_id:', motionId);
+  return motionId;
+}
 
 async function waitForTalkingPhotoReady(
+  heygenKey,
   groupId,
   talkingPhotoId,
   { intervalMs = 5000, maxAttempts = 60 } = {}
 ) {
-  console.log('▶ Waiting for talking photo with motion to be ready...');
+  console.log('▶ Waiting for talking photo with motion to be ready…');
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await jsonFetch(AVATAR_GROUP_AVATARS_URL(groupId), {
-      method: 'GET',
-    });
-
-    const list = res.data?.avatar_list || [];
+    const list = await getAvatarList(heygenKey, groupId);
     const found = list.find((av) => av.id === talkingPhotoId);
-
     const status = found?.status;
+
     console.log(`  Attempt ${attempt}: status = ${status || 'unknown'}`);
 
     if (status === 'completed') {
@@ -364,75 +297,77 @@ async function waitForTalkingPhotoReady(
   throw new Error('Timed out waiting for talking photo motion to complete.');
 }
 
-async function generateVideo(talkingPhotoId, audioAssetId) {
-    console.log('▶ Generating video from talking photo + audio...');
-  
-    const payload = {
-      video_inputs: [
-        {
-          character: {
-            type: 'talking_photo',
-            talking_photo_id: talkingPhotoId,
-          },
-          voice: {
-            type: 'audio',
-            audio_asset_id: audioAssetId,
-            // These hints are optional but often supported and safe to pass.
-            // They help the backend pick a lip-sync mode.
-            audio_config: {
-              speaking_rate: 1.0,     // 1.0 = normal
-              volume_gain_db: 0.0,    // no volume change
-            },
-          },
-          background: {
-            type: 'color',
-            value: '#FFFFFF',
+// -------------- HeyGen: Video generation & status --------------
+
+async function generateHeygenVideo(heygenKey, talkingPhotoId, audioAssetId) {
+  console.log('▶ Generating video from talking photo + audio…');
+
+  const payload = {
+    video_inputs: [
+      {
+        character: {
+          type: 'talking_photo',
+          talking_photo_id: talkingPhotoId,
+        },
+        voice: {
+          type: 'audio',
+          audio_asset_id: audioAssetId,
+          audio_config: {
+            speaking_rate: 1.0,
+            volume_gain_db: 0.0,
           },
         },
-      ],
-      dimension: {
-        width: 720,
-        height: 1280,
+        background: {
+          type: 'color',
+          value: '#FFFFFF',
+        },
       },
-      // Helpful metadata; some backends honour this
-      caption_config: {
-        // disable captions if they try to auto-generate from audio; can sometimes affect processing
-        enabled: false,
-      },
-    };
-  
-    const res = await jsonFetch(VIDEO_GENERATE_URL, {
+    ],
+    dimension: {
+      width: 720,
+      height: 1280,
+    },
+    caption_config: {
+      enabled: false,
+    },
+  };
+
+  const res = await heygenJsonFetch(
+    'https://api.heygen.com/v2/video/generate',
+    {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
-  
-    const videoId = res.data?.video_id;
-    if (!videoId) {
-      throw new Error(
-        'No video_id in video.generate response: ' + JSON.stringify(res)
-      );
-    }
-  
-    console.log('✔ Video generation started. video_id:', videoId);
-    return videoId;
+    },
+    heygenKey
+  );
+
+  const videoId = res.data?.video_id;
+  if (!videoId) {
+    throw new Error(
+      'No video_id in video.generate response: ' + JSON.stringify(res)
+    );
   }
-  
 
-// ---------- Step 8: Wait for video + download ----------
+  console.log('✔ Video generation started. video_id:', videoId);
+  return videoId;
+}
 
-async function waitForVideoAndDownload(
+async function waitForVideoAndGetUrl(
+  heygenKey,
   videoId,
-  outputPath,
   { intervalMs = 5000, maxAttempts = 60 } = {}
 ) {
-  console.log('▶ Waiting for video rendering to complete...');
+  console.log('▶ Waiting for video rendering to complete…');
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const url = `${VIDEO_STATUS_URL}?video_id=${encodeURIComponent(videoId)}`;
-    const res = await jsonFetch(url, { method: 'GET' });
+    const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
+      videoId
+    )}`;
 
+    const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
     const status = res.data?.status;
-    console.log(`  Attempt ${attempt}: status = ${status}`);
+
+    console.log(`  Attempt ${attempt}: video status = ${status}`);
 
     if (status === 'completed') {
       const videoUrl = res.data?.video_url;
@@ -442,10 +377,8 @@ async function waitForVideoAndDownload(
         );
       }
 
-      console.log('✔ Video ready. Downloading:', videoUrl);
-      await downloadFile(videoUrl, outputPath);
-      console.log('✅ Done! Video saved to:', outputPath);
-      return;
+      console.log('✔ Video ready. URL:', videoUrl);
+      return videoUrl;
     }
 
     if (status === 'failed') {
@@ -460,70 +393,117 @@ async function waitForVideoAndDownload(
   throw new Error('Timed out waiting for video to complete.');
 }
 
-// ---------- Main CLI ----------
+// -------------- Main generate flow (browser) --------------
 
-async function main() {
-  const [imagePathArg, scriptPathArg, outArg] = process.argv.slice(2);
+async function handleGenerate(event) {
+  event.preventDefault();
 
-  if (!imagePathArg || !scriptPathArg) {
-    console.error(
-      'Usage:\n' +
-        '  HEYGEN_API_KEY=your_heygen_key ELEVENLABS_API_KEY=your_eleven_key node index.js avatar.jpg script.txt [output.mp4]'
-    );
-    process.exit(1);
+  const elevenKey = 'sk_0482e1026385e70467552530c58bf253d80dcf4e4b3c61e4';//document.getElementById('elevenKey').value.trim();
+  const elevenVoiceId = 'cgSgspJ2msm6clMCkdW9';
+  const elevenModelId = 'eleven_multilingual_v2';
+  const heygenKey = document.getElementById('heygenKey').value.trim();
+  const scriptText = document.getElementById('scriptText').value.trim();
+  const avatarInput = document.getElementById('avatarFile');
+  const avatarFile = avatarInput.files[0];
+
+  const downloadSection = document.getElementById('downloadSection');
+  const videoLink = document.getElementById('videoLink');
+
+  downloadSection.classList.add('hidden');
+  videoLink.href = '#';
+
+  if (!elevenKey || !heygenKey || !scriptText || !avatarFile) {
+    setStatus('Please fill all fields and select an avatar image.', 'error');
+    return;
   }
 
-  const imagePath = path.resolve(imagePathArg);
-  const scriptPath = path.resolve(scriptPathArg);
-  const outputPath =
-    outArg || path.resolve(`heygen_lipsync_${Date.now()}.mp4`);
-
-  if (!fs.existsSync(imagePath)) {
-    console.error('Error: image file not found:', imagePath);
-    process.exit(1);
-  }
-  if (!fs.existsSync(scriptPath)) {
-    console.error('Error: script file not found:', scriptPath);
-    process.exit(1);
-  }
+  const generateBtn = document.getElementById('generateBtn');
+  generateBtn.disabled = true;
+  setStatus('Starting generation… This can take 1–3 minutes.', '');
 
   try {
-    // 1) Read script text (UTF-8 for Urdu)
-    const scriptText = await fs.promises.readFile(scriptPath, 'utf8');
+    // 1) ElevenLabs TTS → audio blob
+    setStatus('Generating audio via ElevenLabs…');
+    const audioBlob = await generateElevenLabsAudioBlob({
+      elevenKey,
+      voiceId: elevenVoiceId,
+      modelId: elevenModelId,
+      text: scriptText,
+    });
 
-    // 2) Generate audio via ElevenLabs into a temp mp3
-    const tempAudioPath = path.resolve(
-      `elevenlabs_tts_${Date.now()}.mp3`
+    // Turn blob into File-like object for upload
+    const audioFile = new File(
+      [audioBlob],
+      `tts_${Date.now()}.mp3`,
+      { type: 'audio/mpeg' }
     );
-    await generateElevenLabsAudioToFile(scriptText, tempAudioPath);
 
-    // 3) Your existing HeyGen pipeline (using the generated audio file)
-    const imageKey = await uploadImageAsset(imagePath);
-    const groupId = await createAvatarGroup(imageKey);
-    const baseTalkingPhotoId = await getBaseTalkingPhotoId(groupId);
+    // 2) Upload avatar image to HeyGen
+    setStatus('Uploading avatar image to HeyGen…');
+    const imageKey = await uploadHeygenAsset({
+      heygenKey,
+      file: avatarFile,
+      fallbackType: 'image/jpeg',
+    });
 
-    await waitForBasePhotoAvatarCompleted(groupId, baseTalkingPhotoId);
+    // 3) Create avatar group
+    setStatus('Creating talking photo avatar in HeyGen…');
+    const groupId = await createAvatarGroup(heygenKey, imageKey);
 
+    // 4) Get base talking photo id
+    const baseTalkingPhotoId = await getBaseTalkingPhotoId(heygenKey, groupId);
+
+    // 5) Wait for base avatar to complete
+    setStatus('Waiting for base avatar to be processed…');
+    await waitForBasePhotoAvatarCompleted(heygenKey, groupId, baseTalkingPhotoId);
+
+    // 6) Add motion
+    setStatus('Adding motion to avatar…');
     const talkingPhotoWithMotionId = await addMotionToTalkingPhoto(
+      heygenKey,
       baseTalkingPhotoId
     );
-    await waitForTalkingPhotoReady(groupId, talkingPhotoWithMotionId);
 
-    const audioAssetId = await uploadAudioAsset(tempAudioPath);
-    const videoId = await generateVideo(talkingPhotoWithMotionId, audioAssetId);
-    await waitForVideoAndDownload(videoId, outputPath);
+    // 7) Wait for motion avatar ready
+    setStatus('Waiting for motion avatar to be ready…');
+    await waitForTalkingPhotoReady(heygenKey, groupId, talkingPhotoWithMotionId);
 
-    // Optional: cleanup temp audio
-    try {
-      await fs.promises.unlink(tempAudioPath);
-      console.log('🧹 Deleted temp audio file:', tempAudioPath);
-    } catch (e) {
-      console.warn('Could not delete temp audio:', e.message);
-    }
+    // 8) Upload audio asset
+    setStatus('Uploading audio to HeyGen…');
+    const audioAssetId = await uploadHeygenAsset({
+      heygenKey,
+      file: audioFile,
+      fallbackType: 'audio/mpeg',
+    });
+
+    // 9) Generate video
+    setStatus('Requesting video generation from HeyGen…');
+    const videoId = await generateHeygenVideo(
+      heygenKey,
+      talkingPhotoWithMotionId,
+      audioAssetId
+    );
+
+    // 10) Wait for video + get URL
+    setStatus('Waiting for video to render…');
+    const videoUrl = await waitForVideoAndGetUrl(heygenKey, videoId);
+
+    // Show link
+    videoLink.href = videoUrl;
+    downloadSection.classList.remove('hidden');
+    setStatus('Video generated successfully!', 'success');
+
   } catch (err) {
-    console.error('❌ Error:', err.message);
-    process.exit(1);
+    console.error(err);
+    setStatus('Error: ' + err.message, 'error');
+  } finally {
+    generateBtn.disabled = false;
   }
 }
 
-main();
+// -------------- Wire up form --------------
+
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('generatorForm');
+  form.addEventListener('submit', handleGenerate);
+});
