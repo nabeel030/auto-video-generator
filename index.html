@@ -48,19 +48,33 @@
     .hidden {
       display: none;
     }
+    .audio-source-options {
+      margin-top: 12px;
+    }
+    .audio-source-options label {
+      font-weight: 400;
+      display: inline-flex;
+      align-items: center;
+      margin-right: 16px;
+      margin-top: 4px;
+    }
+    .audio-source-options input[type="radio"] {
+      margin-right: 6px;
+    }
   </style>
 </head>
 <body>
   <h1>ElevenLabs + HeyGen Talking Avatar (Frontend Only)</h1>
   <p>
-    Enter your API keys, paste your script, choose an avatar image, and generate a video.
+    Enter your API keys, choose whether to use a script or upload an MP3,
+    choose an avatar image, and generate a video.
     (Experimental: may fail due to CORS / rate limits. Keys are visible in browser.)
   </p>
 
   <form id="generatorForm">
     <label>
       ElevenLabs API Key
-      <input type="text" id="elevenKey" placeholder="sk_..." required />
+      <input type="text" id="elevenKey" placeholder="sk_..." />
     </label>
 
     <label>
@@ -69,9 +83,40 @@
     </label>
 
     <label>
-      Script Text
-      <textarea id="scriptText" rows="10" placeholder="Paste your Urdu + English script here..." required></textarea>
+      Audio Source
+      <div class="audio-source-options">
+        <label>
+          <input type="radio" name="audioSource" value="text" checked />
+          Use script text (generate with ElevenLabs)
+        </label>
+        <label>
+          <input type="radio" name="audioSource" value="mp3" />
+          Upload MP3 audio (skip ElevenLabs)
+        </label>
+      </div>
     </label>
+
+    <div id="scriptGroup">
+      <label>
+        Script Text
+        <textarea
+          id="scriptText"
+          rows="10"
+          placeholder="Paste your Urdu + English script here..."
+        ></textarea>
+      </label>
+    </div>
+
+    <div id="audioFileGroup" class="hidden">
+      <label>
+        Upload MP3 Audio
+        <input
+          type="file"
+          id="audioFile"
+          accept="audio/mpeg,audio/mp3,audio/*"
+        />
+      </label>
+    </div>
 
     <label>
       Avatar Image

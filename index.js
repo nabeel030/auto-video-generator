@@ -40,9 +40,9 @@ async function generateElevenLabsAudioBlob({
     text,
     model_id: modelId,
     voice_settings: {
-      similarity_boost: 0.75,
-      stability: 0.5,
-      style: 0,
+      stability: 0.30,
+      similarity_boost: 0.85,
+      style: 0.45,
       use_speaker_boost: true,
     },
   };
@@ -100,7 +100,9 @@ async function uploadHeygenAsset({ heygenKey, file, fallbackType }) {
     data.image_key || data.id || data.asset_id || data.audio_asset_id || null;
 
   if (!id) {
-    throw new Error('HeyGen upload did not return an asset id: ' + JSON.stringify(json));
+    throw new Error(
+      'HeyGen upload did not return an asset id: ' + JSON.stringify(json)
+    );
   }
 
   console.log('✔ HeyGen asset uploaded. id:', id);
@@ -172,12 +174,7 @@ async function getAvatarList(heygenKey, groupId) {
     groupId
   )}/avatars`;
 
-  const res = await heygenJsonFetch(
-    url,
-    { method: 'GET' },
-    heygenKey
-  );
-
+  const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
   return res.data?.avatar_list || [];
 }
 
@@ -383,7 +380,8 @@ async function waitForVideoAndGetUrl(
 
     if (status === 'failed') {
       throw new Error(
-        'Video generation failed: ' + JSON.stringify(res.data?.error || res.data)
+        'Video generation failed: ' +
+          JSON.stringify(res.data?.error || res.data)
       );
     }
 
@@ -401,10 +399,18 @@ async function handleGenerate(event) {
   const elevenKey = document.getElementById('elevenKey').value.trim();
   const elevenVoiceId = 'cgSgspJ2msm6clMCkdW9';
   const elevenModelId = 'eleven_multilingual_v2';
+
   const heygenKey = document.getElementById('heygenKey').value.trim();
   const scriptText = document.getElementById('scriptText').value.trim();
   const avatarInput = document.getElementById('avatarFile');
   const avatarFile = avatarInput.files[0];
+
+  const audioSource = document.querySelector(
+    'input[name="audioSource"]:checked'
+  )?.value || 'text';
+
+  const audioFileInput = document.getElementById('audioFile');
+  const uploadedAudioFile = audioFileInput.files[0];
 
   const downloadSection = document.getElementById('downloadSection');
   const videoLink = document.getElementById('videoLink');
@@ -412,9 +418,34 @@ async function handleGenerate(event) {
   downloadSection.classList.add('hidden');
   videoLink.href = '#';
 
-  if (!elevenKey || !heygenKey || !scriptText || !avatarFile) {
-    setStatus('Please fill all fields and select an avatar image.', 'error');
+  // ---- Validation based on audio source ----
+  if (!heygenKey) {
+    setStatus('Please enter your HeyGen API key.', 'error');
     return;
+  }
+
+  if (!avatarFile) {
+    setStatus('Please select an avatar image.', 'error');
+    return;
+  }
+
+  if (audioSource === 'text') {
+    if (!elevenKey) {
+      setStatus(
+        'Please enter your ElevenLabs API key (required when using script text).',
+        'error'
+      );
+      return;
+    }
+    if (!scriptText) {
+      setStatus('Please enter your script text.', 'error');
+      return;
+    }
+  } else if (audioSource === 'mp3') {
+    if (!uploadedAudioFile) {
+      setStatus('Please upload an MP3 file.', 'error');
+      return;
+    }
   }
 
   const generateBtn = document.getElementById('generateBtn');
@@ -422,21 +453,27 @@ async function handleGenerate(event) {
   setStatus('Starting generation… This can take 1–3 minutes.', '');
 
   try {
-    // 1) ElevenLabs TTS → audio blob
-    setStatus('Generating audio via ElevenLabs…');
-    const audioBlob = await generateElevenLabsAudioBlob({
-      elevenKey,
-      voiceId: elevenVoiceId,
-      modelId: elevenModelId,
-      text: scriptText,
-    });
+    let audioFile;
 
-    // Turn blob into File-like object for upload
-    const audioFile = new File(
-      [audioBlob],
-      `tts_${Date.now()}.mp3`,
-      { type: 'audio/mpeg' }
-    );
+    if (audioSource === 'text') {
+      // 1) ElevenLabs TTS → audio blob
+      setStatus('Generating audio via ElevenLabs…');
+      const audioBlob = await generateElevenLabsAudioBlob({
+        elevenKey,
+        voiceId: elevenVoiceId,
+        modelId: elevenModelId,
+        text: scriptText,
+      });
+
+      // Turn blob into File-like object for upload
+      audioFile = new File([audioBlob], `tts_${Date.now()}.mp3`, {
+        type: 'audio/mpeg',
+      });
+    } else {
+      // Use uploaded MP3 directly
+      setStatus('Using uploaded MP3 audio…');
+      audioFile = uploadedAudioFile;
+    }
 
     // 2) Upload avatar image to HeyGen
     setStatus('Uploading avatar image to HeyGen…');
@@ -455,7 +492,11 @@ async function handleGenerate(event) {
 
     // 5) Wait for base avatar to complete
     setStatus('Waiting for base avatar to be processed…');
-    await waitForBasePhotoAvatarCompleted(heygenKey, groupId, baseTalkingPhotoId);
+    await waitForBasePhotoAvatarCompleted(
+      heygenKey,
+      groupId,
+      baseTalkingPhotoId
+    );
 
     // 6) Add motion
     setStatus('Adding motion to avatar…');
@@ -466,7 +507,11 @@ async function handleGenerate(event) {
 
     // 7) Wait for motion avatar ready
     setStatus('Waiting for motion avatar to be ready…');
-    await waitForTalkingPhotoReady(heygenKey, groupId, talkingPhotoWithMotionId);
+    await waitForTalkingPhotoReady(
+      heygenKey,
+      groupId,
+      talkingPhotoWithMotionId
+    );
 
     // 8) Upload audio asset
     setStatus('Uploading audio to HeyGen…');
@@ -492,7 +537,6 @@ async function handleGenerate(event) {
     videoLink.href = videoUrl;
     downloadSection.classList.remove('hidden');
     setStatus('Video generated successfully!', 'success');
-
   } catch (err) {
     console.error(err);
     setStatus('Error: ' + err.message, 'error');
@@ -501,9 +545,37 @@ async function handleGenerate(event) {
   }
 }
 
+// -------------- UI toggle for audio source --------------
+
+function updateAudioSourceUI() {
+  const audioSource = document.querySelector(
+    'input[name="audioSource"]:checked'
+  )?.value || 'text';
+
+  const scriptGroup = document.getElementById('scriptGroup');
+  const audioFileGroup = document.getElementById('audioFileGroup');
+
+  if (audioSource === 'text') {
+    scriptGroup.classList.remove('hidden');
+    audioFileGroup.classList.add('hidden');
+  } else {
+    scriptGroup.classList.add('hidden');
+    audioFileGroup.classList.remove('hidden');
+  }
+}
+
 // -------------- Wire up form --------------
 
 document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('generatorForm');
   form.addEventListener('submit', handleGenerate);
+
+  const audioSourceRadios = document.querySelectorAll(
+    'input[name="audioSource"]'
+  );
+  audioSourceRadios.forEach((radio) => {
+    radio.addEventListener('change', updateAudioSourceUI);
+  });
+
+  updateAudioSourceUI();
 });
