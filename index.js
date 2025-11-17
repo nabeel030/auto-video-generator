@@ -43,6 +43,7 @@ async function generateElevenLabsAudioBlob({
       stability: 0.30,
       similarity_boost: 0.85,
       style: 0.45,
+      speed: 0.85,
       use_speaker_boost: true,
     },
   };
@@ -237,9 +238,8 @@ async function addMotionToTalkingPhoto(heygenKey, talkingPhotoId) {
 
   const payload = {
     id: talkingPhotoId,
-    prompt:
-      'Speak in a calm, friendly manner with subtle eye movement and small, natural head motions. Avoid exaggerated blinking or fast head movements.',
-    motion_type: 'consistent',
+    prompt: 'Talk naturally with a warm, friendly tone while keeping steady eye contact with the viewer. Use smooth facial expressions and soft, irregular blinks, never fast or repetitive. If hands are visible, move them gently with small, relaxed gestures that stay within the frame. Keep head movements minimal and smooth, without sudden or jerky motions.',
+    motion_type: 'runway_gen4',
   };
 
   const res = await heygenJsonFetch(
@@ -349,47 +349,56 @@ async function generateHeygenVideo(heygenKey, talkingPhotoId, audioAssetId) {
   return videoId;
 }
 
-async function waitForVideoAndGetUrl(
-  heygenKey,
-  videoId,
-  { intervalMs = 5000, maxAttempts = 60 } = {}
-) {
-  console.log('▶ Waiting for video rendering to complete…');
+async function waitForVideoAndGetUrl(heygenKey, videoId, intervalMs = 5000) {
+  console.log('▶ Waiting for video rendering to complete… (infinite mode)');
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
-      videoId
-    )}`;
+  while (true) {
+    try {
+      const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
+        videoId
+      )}`;
 
-    const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
-    const status = res.data?.status;
+      const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
+      const status = res.data?.status;
 
-    console.log(`  Attempt ${attempt}: video status = ${status}`);
+      console.log(`  Video status = ${status}`);
 
-    if (status === 'completed') {
-      const videoUrl = res.data?.video_url;
-      if (!videoUrl) {
+      // --- Completed
+      if (status === 'completed') {
+        const videoUrl = res.data?.video_url;
+        if (!videoUrl) {
+          console.warn(
+            '⚠ Video says completed but no URL yet… retrying.'
+          );
+          await sleep(intervalMs);
+          continue;
+        }
+
+        console.log('✔ Video ready. URL:', videoUrl);
+        return videoUrl;
+      }
+
+      // --- Failed
+      if (status === 'failed') {
         throw new Error(
-          'Video completed but video_url missing: ' + JSON.stringify(res)
+          'Video generation failed: ' +
+            JSON.stringify(res.data?.error || res.data)
         );
       }
 
-      console.log('✔ Video ready. URL:', videoUrl);
-      return videoUrl;
-    }
-
-    if (status === 'failed') {
-      throw new Error(
-        'Video generation failed: ' +
-          JSON.stringify(res.data?.error || res.data)
+      // --- Pending (processing)
+      console.log(`  Waiting ${intervalMs / 1000}s before next check…`);
+      await sleep(intervalMs);
+    } catch (err) {
+      console.error('⚠ Error during polling:', err.message);
+      console.log(
+        `  Retrying in ${intervalMs / 1000}s (network or temporary API issue)…`
       );
+      await sleep(intervalMs);
     }
-
-    await sleep(intervalMs);
   }
-
-  throw new Error('Timed out waiting for video to complete.');
 }
+
 
 // -------------- Main generate flow (browser) --------------
 
@@ -546,7 +555,6 @@ async function handleGenerate(event) {
 }
 
 // -------------- UI toggle for audio source --------------
-
 function updateAudioSourceUI() {
   const audioSource = document.querySelector(
     'input[name="audioSource"]:checked'
@@ -554,12 +562,21 @@ function updateAudioSourceUI() {
 
   const scriptGroup = document.getElementById('scriptGroup');
   const audioFileGroup = document.getElementById('audioFileGroup');
+  const elevenKeyGroup = document.getElementById('elevenKeyGroup');
 
   if (audioSource === 'text') {
+    // SHOW ElevenLabs
     scriptGroup.classList.remove('hidden');
+    elevenKeyGroup.classList.remove('hidden');
+
+    // HIDE MP3 upload
     audioFileGroup.classList.add('hidden');
   } else {
+    // HIDES ElevenLabs fields completely
     scriptGroup.classList.add('hidden');
+    elevenKeyGroup.classList.add('hidden');
+
+    // SHOW MP3 upload
     audioFileGroup.classList.remove('hidden');
   }
 }
