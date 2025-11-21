@@ -14,12 +14,29 @@ function guessContentType(fileName, fallback) {
   return fallback || 'application/octet-stream';
 }
 
+function log(msg) {
+  console.log(msg);
+  const panel = document.getElementById('logPanel');
+  if (!panel) return;
+  const timestamp = new Date().toLocaleTimeString();
+  panel.textContent += `[${timestamp}] ${msg}\n`;
+  panel.scrollTop = panel.scrollHeight;
+}
+
 function setStatus(msg, type = '') {
   const statusEl = document.getElementById('status');
   statusEl.textContent = msg;
   statusEl.className = 'status';
   if (type === 'error') statusEl.classList.add('status--error');
   if (type === 'success') statusEl.classList.add('status--success');
+  log(msg);
+}
+
+function setProgress(percent) {
+  const bar = document.getElementById('progressBar');
+  if (!bar) return;
+  const p = Math.max(0, Math.min(100, percent));
+  bar.style.width = `${p}%`;
 }
 
 // -------------- ElevenLabs: TTS -> Blob --------------
@@ -30,7 +47,7 @@ async function generateElevenLabsAudioBlob({
   modelId,
   text,
 }) {
-  console.log('▶ Calling ElevenLabs TTS…');
+  log('▶ Calling ElevenLabs TTS…');
 
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
     voiceId
@@ -43,8 +60,9 @@ async function generateElevenLabsAudioBlob({
       stability: 0.30,
       similarity_boost: 0.85,
       style: 0.45,
-      speed: 0.85,
       use_speaker_boost: true,
+      // 🔽 tweak this if you want slower / faster speech
+      speed: 0.85,
     },
   };
 
@@ -66,7 +84,7 @@ async function generateElevenLabsAudioBlob({
   }
 
   const blob = await res.blob();
-  console.log('✔ ElevenLabs audio generated (blob size:', blob.size, ')');
+  log(`✔ ElevenLabs audio generated (blob size: ${blob.size})`);
   return blob;
 }
 
@@ -78,7 +96,7 @@ async function uploadHeygenAsset({ heygenKey, file, fallbackType }) {
   const contentType =
     file.type || guessContentType(file.name || 'file', fallbackType);
 
-  console.log('▶ Uploading HeyGen asset:', file.name || '(blob)', contentType);
+  log(`▶ Uploading HeyGen asset: ${file.name || '(blob)'} (${contentType})`);
 
   const res = await fetch(url, {
     method: 'POST',
@@ -106,7 +124,7 @@ async function uploadHeygenAsset({ heygenKey, file, fallbackType }) {
     );
   }
 
-  console.log('✔ HeyGen asset uploaded. id:', id);
+  log(`✔ HeyGen asset uploaded. id: ${id}`);
   return id;
 }
 
@@ -143,7 +161,7 @@ async function heygenJsonFetch(url, options = {}, heygenKey) {
 // -------------- HeyGen: Create avatar group --------------
 
 async function createAvatarGroup(heygenKey, imageKey) {
-  console.log('▶ Creating HeyGen photo avatar group…');
+  log('▶ Creating HeyGen photo avatar group…');
 
   const payload = {
     name: 'Generated Talking Photo (Browser)',
@@ -166,7 +184,7 @@ async function createAvatarGroup(heygenKey, imageKey) {
     );
   }
 
-  console.log('✔ Avatar group created. group_id:', groupId);
+  log(`✔ Avatar group created. group_id: ${groupId}`);
   return groupId;
 }
 
@@ -180,7 +198,7 @@ async function getAvatarList(heygenKey, groupId) {
 }
 
 async function getBaseTalkingPhotoId(heygenKey, groupId) {
-  console.log('▶ Fetching avatar list for group:', groupId);
+  log(`▶ Fetching avatar list for group: ${groupId}`);
 
   const list = await getAvatarList(heygenKey, groupId);
 
@@ -193,7 +211,7 @@ async function getBaseTalkingPhotoId(heygenKey, groupId) {
     throw new Error('Avatar has no id: ' + JSON.stringify(list[0]));
   }
 
-  console.log('✔ Base talking photo id:', id);
+  log(`✔ Base talking photo id: ${id}`);
   return id;
 }
 
@@ -203,19 +221,17 @@ async function waitForBasePhotoAvatarCompleted(
   avatarId,
   { intervalMs = 5000, maxAttempts = 60 } = {}
 ) {
-  console.log('▶ Waiting for base photo avatar to complete…');
+  log('▶ Waiting for base photo avatar to complete…');
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const list = await getAvatarList(heygenKey, groupId);
     const found = list.find((av) => av.id === avatarId);
     const status = found?.status;
 
-    console.log(
-      `  Attempt ${attempt}: base avatar status = ${status || 'unknown'}`
-    );
+    log(`  Attempt ${attempt}: base avatar status = ${status || 'unknown'}`);
 
     if (status === 'completed') {
-      console.log('✔ Base photo avatar completed.');
+      log('✔ Base photo avatar completed.');
       return;
     }
 
@@ -234,12 +250,13 @@ async function waitForBasePhotoAvatarCompleted(
 // -------------- HeyGen: Add motion & wait --------------
 
 async function addMotionToTalkingPhoto(heygenKey, talkingPhotoId) {
-  console.log('▶ Adding motion to talking photo:', talkingPhotoId);
+  log(`▶ Adding motion to talking photo: ${talkingPhotoId}`);
 
   const payload = {
     id: talkingPhotoId,
-    prompt: 'Talk naturally with a warm, friendly tone while keeping steady eye contact with the viewer. Use smooth facial expressions and soft, irregular blinks, never fast or repetitive. If hands are visible, move them gently with small, relaxed gestures that stay within the frame. Keep head movements minimal and smooth, without sudden or jerky motions.',
-    motion_type: 'runway_gen4',
+    motion_type: 'consistent', // or 'runway_gen4' to experiment
+    prompt:
+      'Talk naturally with a warm, friendly tone while keeping steady eye contact with the viewer. Use smooth facial expressions and soft, irregular blinks, never fast or repetitive. If hands are visible, move them gently with small, relaxed gestures that stay within the frame. Keep head movements minimal and smooth, without sudden or jerky motions.',
   };
 
   const res = await heygenJsonFetch(
@@ -258,7 +275,7 @@ async function addMotionToTalkingPhoto(heygenKey, talkingPhotoId) {
     );
   }
 
-  console.log('✔ Motion added. talking_photo_with_motion_id:', motionId);
+  log(`✔ Motion added. talking_photo_with_motion_id: ${motionId}`);
   return motionId;
 }
 
@@ -268,17 +285,17 @@ async function waitForTalkingPhotoReady(
   talkingPhotoId,
   { intervalMs = 5000, maxAttempts = 60 } = {}
 ) {
-  console.log('▶ Waiting for talking photo with motion to be ready…');
+  log('▶ Waiting for talking photo with motion to be ready…');
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const list = await getAvatarList(heygenKey, groupId);
     const found = list.find((av) => av.id === talkingPhotoId);
     const status = found?.status;
 
-    console.log(`  Attempt ${attempt}: status = ${status || 'unknown'}`);
+    log(`  Attempt ${attempt}: status = ${status || 'unknown'}`);
 
     if (status === 'completed') {
-      console.log('✔ Talking photo is ready with motion.');
+      log('✔ Talking photo is ready with motion.');
       return;
     }
 
@@ -297,7 +314,7 @@ async function waitForTalkingPhotoReady(
 // -------------- HeyGen: Video generation & status --------------
 
 async function generateHeygenVideo(heygenKey, talkingPhotoId, audioAssetId) {
-  console.log('▶ Generating video from talking photo + audio…');
+  log('▶ Generating video from talking photo + audio…');
 
   const payload = {
     video_inputs: [
@@ -345,60 +362,51 @@ async function generateHeygenVideo(heygenKey, talkingPhotoId, audioAssetId) {
     );
   }
 
-  console.log('✔ Video generation started. video_id:', videoId);
+  log(`✔ Video generation started. video_id: ${videoId}`);
   return videoId;
 }
 
-async function waitForVideoAndGetUrl(heygenKey, videoId, intervalMs = 5000) {
-  console.log('▶ Waiting for video rendering to complete… (infinite mode)');
+async function waitForVideoAndGetUrl(
+  heygenKey,
+  videoId,
+  { intervalMs = 5000, maxAttempts = 60 } = {}
+) {
+  log('▶ Waiting for video rendering to complete…');
 
-  while (true) {
-    try {
-      const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
-        videoId
-      )}`;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
+      videoId
+    )}`;
 
-      const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
-      const status = res.data?.status;
+    const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
+    const status = res.data?.status;
 
-      console.log(`  Video status = ${status}`);
+    log(`  Attempt ${attempt}: video status = ${status}`);
 
-      // --- Completed
-      if (status === 'completed') {
-        const videoUrl = res.data?.video_url;
-        if (!videoUrl) {
-          console.warn(
-            '⚠ Video says completed but no URL yet… retrying.'
-          );
-          await sleep(intervalMs);
-          continue;
-        }
-
-        console.log('✔ Video ready. URL:', videoUrl);
-        return videoUrl;
-      }
-
-      // --- Failed
-      if (status === 'failed') {
+    if (status === 'completed') {
+      const videoUrl = res.data?.video_url;
+      if (!videoUrl) {
         throw new Error(
-          'Video generation failed: ' +
-            JSON.stringify(res.data?.error || res.data)
+          'Video completed but video_url missing: ' + JSON.stringify(res)
         );
       }
 
-      // --- Pending (processing)
-      console.log(`  Waiting ${intervalMs / 1000}s before next check…`);
-      await sleep(intervalMs);
-    } catch (err) {
-      console.error('⚠ Error during polling:', err.message);
-      console.log(
-        `  Retrying in ${intervalMs / 1000}s (network or temporary API issue)…`
-      );
-      await sleep(intervalMs);
+      log(`✔ Video ready. URL: ${videoUrl}`);
+      return videoUrl;
     }
-  }
-}
 
+    if (status === 'failed') {
+      throw new Error(
+        'Video generation failed: ' +
+          JSON.stringify(res.data?.error || res.data)
+      );
+    }
+
+    await sleep(intervalMs);
+  }
+
+  throw new Error('Timed out waiting for video to complete.');
+}
 
 // -------------- Main generate flow (browser) --------------
 
@@ -421,11 +429,29 @@ async function handleGenerate(event) {
   const audioFileInput = document.getElementById('audioFile');
   const uploadedAudioFile = audioFileInput.files[0];
 
+  const remember = document.getElementById('rememberSettings').checked;
+
   const downloadSection = document.getElementById('downloadSection');
   const videoLink = document.getElementById('videoLink');
 
   downloadSection.classList.add('hidden');
   videoLink.href = '#';
+  setProgress(0);
+
+  // Remember / clear settings in localStorage
+  if (remember) {
+    localStorage.setItem('tg_remember', '1');
+    localStorage.setItem('tg_heygenKey', heygenKey);
+    localStorage.setItem('tg_elevenKey', elevenKey);
+    localStorage.setItem('tg_audioSource', audioSource);
+    localStorage.setItem('tg_scriptText', scriptText);
+  } else {
+    localStorage.removeItem('tg_remember');
+    localStorage.removeItem('tg_heygenKey');
+    localStorage.removeItem('tg_elevenKey');
+    localStorage.removeItem('tg_audioSource');
+    localStorage.removeItem('tg_scriptText');
+  }
 
   // ---- Validation based on audio source ----
   if (!heygenKey) {
@@ -459,7 +485,8 @@ async function handleGenerate(event) {
 
   const generateBtn = document.getElementById('generateBtn');
   generateBtn.disabled = true;
-  setStatus('Starting generation… This can take 1–3 minutes.', '');
+  setStatus('Starting generation… This can take a few minutes.', '');
+  setProgress(5);
 
   try {
     let audioFile;
@@ -473,6 +500,7 @@ async function handleGenerate(event) {
         modelId: elevenModelId,
         text: scriptText,
       });
+      setProgress(20);
 
       // Turn blob into File-like object for upload
       audioFile = new File([audioBlob], `tts_${Date.now()}.mp3`, {
@@ -482,6 +510,7 @@ async function handleGenerate(event) {
       // Use uploaded MP3 directly
       setStatus('Using uploaded MP3 audio…');
       audioFile = uploadedAudioFile;
+      setProgress(15);
     }
 
     // 2) Upload avatar image to HeyGen
@@ -491,10 +520,12 @@ async function handleGenerate(event) {
       file: avatarFile,
       fallbackType: 'image/jpeg',
     });
+    setProgress(30);
 
     // 3) Create avatar group
     setStatus('Creating talking photo avatar in HeyGen…');
     const groupId = await createAvatarGroup(heygenKey, imageKey);
+    setProgress(40);
 
     // 4) Get base talking photo id
     const baseTalkingPhotoId = await getBaseTalkingPhotoId(heygenKey, groupId);
@@ -506,6 +537,7 @@ async function handleGenerate(event) {
       groupId,
       baseTalkingPhotoId
     );
+    setProgress(55);
 
     // 6) Add motion
     setStatus('Adding motion to avatar…');
@@ -521,6 +553,7 @@ async function handleGenerate(event) {
       groupId,
       talkingPhotoWithMotionId
     );
+    setProgress(70);
 
     // 8) Upload audio asset
     setStatus('Uploading audio to HeyGen…');
@@ -529,6 +562,7 @@ async function handleGenerate(event) {
       file: audioFile,
       fallbackType: 'audio/mpeg',
     });
+    setProgress(80);
 
     // 9) Generate video
     setStatus('Requesting video generation from HeyGen…');
@@ -537,10 +571,12 @@ async function handleGenerate(event) {
       talkingPhotoWithMotionId,
       audioAssetId
     );
+    setProgress(90);
 
     // 10) Wait for video + get URL
     setStatus('Waiting for video to render…');
     const videoUrl = await waitForVideoAndGetUrl(heygenKey, videoId);
+    setProgress(100);
 
     // Show link
     videoLink.href = videoUrl;
@@ -549,12 +585,14 @@ async function handleGenerate(event) {
   } catch (err) {
     console.error(err);
     setStatus('Error: ' + err.message, 'error');
+    setProgress(0);
   } finally {
     generateBtn.disabled = false;
   }
 }
 
 // -------------- UI toggle for audio source --------------
+
 function updateAudioSourceUI() {
   const audioSource = document.querySelector(
     'input[name="audioSource"]:checked'
@@ -565,19 +603,39 @@ function updateAudioSourceUI() {
   const elevenKeyGroup = document.getElementById('elevenKeyGroup');
 
   if (audioSource === 'text') {
-    // SHOW ElevenLabs
     scriptGroup.classList.remove('hidden');
     elevenKeyGroup.classList.remove('hidden');
-
-    // HIDE MP3 upload
     audioFileGroup.classList.add('hidden');
   } else {
-    // HIDES ElevenLabs fields completely
     scriptGroup.classList.add('hidden');
     elevenKeyGroup.classList.add('hidden');
-
-    // SHOW MP3 upload
     audioFileGroup.classList.remove('hidden');
+  }
+}
+
+// -------------- Load saved settings --------------
+
+function loadSavedSettings() {
+  const remember = localStorage.getItem('tg_remember') === '1';
+  const rememberCheckbox = document.getElementById('rememberSettings');
+  rememberCheckbox.checked = remember;
+
+  if (!remember) return;
+
+  const savedHeygenKey = localStorage.getItem('tg_heygenKey') || '';
+  const savedElevenKey = localStorage.getItem('tg_elevenKey') || '';
+  const savedAudioSource = localStorage.getItem('tg_audioSource') || 'text';
+  const savedScriptText = localStorage.getItem('tg_scriptText') || '';
+
+  document.getElementById('heygenKey').value = savedHeygenKey;
+  document.getElementById('elevenKey').value = savedElevenKey;
+  document.getElementById('scriptText').value = savedScriptText;
+
+  const radio = document.querySelector(
+    `input[name="audioSource"][value="${savedAudioSource}"]`
+  );
+  if (radio) {
+    radio.checked = true;
   }
 }
 
@@ -591,8 +649,19 @@ document.addEventListener('DOMContentLoaded', () => {
     'input[name="audioSource"]'
   );
   audioSourceRadios.forEach((radio) => {
-    radio.addEventListener('change', updateAudioSourceUI);
+    radio.addEventListener('change', () => {
+      updateAudioSourceUI();
+      const audioSource = document.querySelector(
+        'input[name="audioSource"]:checked'
+      )?.value || 'text';
+      const remember = document.getElementById('rememberSettings').checked;
+      if (remember) {
+        localStorage.setItem('tg_audioSource', audioSource);
+      }
+    });
   });
 
+  loadSavedSettings();
   updateAudioSourceUI();
+  log('✅ UI ready.');
 });

@@ -61,6 +61,42 @@
     .audio-source-options input[type="radio"] {
       margin-right: 6px;
     }
+    .remember-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-weight: 400;
+      font-size: 14px;
+    }
+    .remember-row input[type="checkbox"] {
+      margin: 0;
+    }
+    #progressBarContainer {
+      margin-top: 8px;
+      height: 6px;
+      background: #edf2f7;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    #progressBar {
+      width: 0%;
+      height: 100%;
+      background: #3182ce;
+      transition: width 0.3s ease;
+    }
+    #logPanel {
+      margin-top: 16px;
+      padding: 8px 10px;
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      font-size: 12px;
+      max-height: 220px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
   </style>
 </head>
 <body>
@@ -123,10 +159,22 @@
       <input type="file" id="avatarFile" accept="image/*" required />
     </label>
 
+    <div class="remember-row">
+      <input type="checkbox" id="rememberSettings" />
+      <label for="rememberSettings" style="margin-top:0;font-weight:400;">
+        Remember keys & options on this browser
+      </label>
+    </div>
+
     <button type="submit" id="generateBtn">Generate Video</button>
   </form>
 
   <div id="status" class="status"></div>
+  <div id="progressBarContainer">
+    <div id="progressBar"></div>
+  </div>
+
+  <pre id="logPanel"></pre>
 
   <div id="downloadSection" class="status hidden">
     ✅ Video is ready:
