@@ -254,9 +254,9 @@ async function addMotionToTalkingPhoto(heygenKey, talkingPhotoId) {
 
   const payload = {
     id: talkingPhotoId,
-    motion_type: 'consistent', // or 'runway_gen4' to experiment
-    prompt:
-      'Talk naturally with a warm, friendly tone while keeping steady eye contact with the viewer. Use smooth facial expressions and soft, irregular blinks, never fast or repetitive. If hands are visible, move them gently with small, relaxed gestures that stay within the frame. Keep head movements minimal and smooth, without sudden or jerky motions.',
+    motion_type: 'runway_gen4', // or 'runway_gen4' to experiment
+    // prompt: "Talk naturally with a warm, friendly tone while keeping steady eye contact with the viewer; use smooth facial expressions and soft, no blinks at all; if hands are visible, move them gently with small, relaxed gestures; keep head movements minimal and smooth without sudden or jerky motions."
+    prompt: "Talk naturally with a warm, friendly tone while keeping steady eye contact with the viewer; use smooth facial expressions and soft, irregular blinks; if hands are visible, move them gently with small, relaxed gestures; keep head movements minimal and smooth without sudden or jerky motions."
   };
 
   const res = await heygenJsonFetch(
@@ -366,47 +366,68 @@ async function generateHeygenVideo(heygenKey, talkingPhotoId, audioAssetId) {
   return videoId;
 }
 
-async function waitForVideoAndGetUrl(
-  heygenKey,
-  videoId,
-  { intervalMs = 5000, maxAttempts = 60 } = {}
-) {
+async function waitForVideoAndGetUrl(heygenKey, videoId, intervalMs = 5000) {
   log('▶ Waiting for video rendering to complete…');
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
-      videoId
-    )}`;
+  // We already set progress to 90 before calling this.
+  // We'll slowly move from 90 → 99 while status is processing/queued.
+  let progress = 50;
 
-    const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
-    const status = res.data?.status;
+  while (true) {
+    try {
+      const url = `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(
+        videoId
+      )}`;
 
-    log(`  Attempt ${attempt}: video status = ${status}`);
+      const res = await heygenJsonFetch(url, { method: 'GET' }, heygenKey);
+      const status = res.data?.status;
 
-    if (status === 'completed') {
-      const videoUrl = res.data?.video_url;
-      if (!videoUrl) {
+      // Handle completed
+      if (status === 'completed') {
+        const videoUrl = res.data?.video_url;
+        if (!videoUrl) {
+          log('⚠ Video status is completed but no URL yet, retrying…');
+          await sleep(intervalMs);
+          continue;
+        }
+
+        log(`✔ Video ready. URL: ${videoUrl}`);
+        setProgress(100);
+        return videoUrl;
+      }
+
+      // Handle failed
+      if (status === 'failed') {
         throw new Error(
-          'Video completed but video_url missing: ' + JSON.stringify(res)
+          'Video generation failed: ' +
+            JSON.stringify(res.data?.error || res.data)
         );
       }
 
-      log(`✔ Video ready. URL: ${videoUrl}`);
-      return videoUrl;
-    }
+      // Still processing / queued / rendering
+      // Increment progress slowly up to 99% (fake visual progress)
+      if (progress < 99) {
+        progress += 1;
+      }
+      setProgress(progress);
 
-    if (status === 'failed') {
-      throw new Error(
-        'Video generation failed: ' +
-          JSON.stringify(res.data?.error || res.data)
+      log(
+        `  Video rendering: ${progress}% (status: ${status || 'unknown'})`
       );
+
+      await sleep(intervalMs);
+    } catch (err) {
+      // Network / temporary API issue: log and retry
+      log(
+        `⚠ Error while checking video status: ${err.message}. Retrying in ${
+          intervalMs / 1000
+        }s…`
+      );
+      await sleep(intervalMs);
     }
-
-    await sleep(intervalMs);
   }
-
-  throw new Error('Timed out waiting for video to complete.');
 }
+
 
 // -------------- Main generate flow (browser) --------------
 
